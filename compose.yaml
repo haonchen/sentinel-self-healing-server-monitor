@@ -1,0 +1,115 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    environment: &app-environment
+      APP_NAME: Sentinel
+      APP_ENV: local
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:?Generate an application key in .env first}
+      APP_URL: http://localhost:8000
+      DB_CONNECTION: mariadb
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: sentinel
+      DB_USERNAME: sentinel
+      DB_PASSWORD: ${DB_PASSWORD:-sentinel-local-only}
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      DB_QUEUE_RETRY_AFTER: 180
+      DOCKER_SOCKET: /var/run/docker.sock
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      SENTINEL_CHAOS_ENABLED: "true"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["sh", "-lc", "php artisan migrate --force && php artisan db:seed --class=SentinelDemoSeeder --force && php artisan serve --host=0.0.0.0 --port=8000"]
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment: *app-environment
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["php", "artisan", "schedule:work", "--no-interaction"]
+
+  worker:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment: *app-environment
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=160", "--no-interaction"]
+
+  db:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: sentinel
+      MARIADB_USER: sentinel
+      MARIADB_PASSWORD: ${DB_PASSWORD:-sentinel-local-only}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-sentinel-root-local-only}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    profiles: ["setup-ai"]
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/ollama"]
+    command: ["pull", "${OLLAMA_MODEL:-llama3.1:8b}"]
+
+  demo-web:
+    image: nginx:1.27-alpine
+    container_name: sentinel-demo-web
+    restart: unless-stopped
+    expose: ["80"]
+
+  demo-api:
+    image: traefik/whoami:v1.10
+    container_name: sentinel-demo-api
+    restart: unless-stopped
+    expose: ["80"]
+
+  demo-cache:
+    image: redis:7-alpine
+    container_name: sentinel-demo-cache
+    restart: unless-stopped
+    expose: ["6379"]
+
+volumes:
+  mariadb-data:
+  ollama-data:
