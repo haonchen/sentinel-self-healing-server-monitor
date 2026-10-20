@@ -29,6 +29,15 @@ class SentinelDemoSeeder extends Seeder
                 'check_target' => 'http://demo-api/',
             ],
             [
+                'slug' => 'testing-api',
+                'name' => 'Testing API',
+                'container_name' => 'testing-api-app-1',
+                'description' => 'Products API running in the separate testing-api Docker project.',
+                'documentation_url' => null,
+                'check_type' => 'http',
+                'check_target' => 'http://host.docker.internal:8080/up',
+            ],
+            [
                 'slug' => 'cache',
                 'name' => 'Cache',
                 'container_name' => 'sentinel-demo-cache',
@@ -47,6 +56,10 @@ class SentinelDemoSeeder extends Seeder
 
             if (blank($record->documentation_url)) {
                 $record->update(['documentation_url' => $service['documentation_url']]);
+            }
+
+            if ($record->check_target !== $service['check_target']) {
+                $record->update(['check_target' => $service['check_target']]);
             }
         }
     }

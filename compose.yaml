@@ -29,6 +29,8 @@ services:
       SENTINEL_CHAOS_ENABLED: "true"
     ports:
       - "127.0.0.1:8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["sh", "-lc", "php artisan migrate --force && php artisan db:seed --class=SentinelDemoSeeder --force && php artisan serve --host=0.0.0.0 --port=8000"]
@@ -45,6 +47,8 @@ services:
       app:
         condition: service_healthy
     environment: *app-environment
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["php", "artisan", "schedule:work", "--no-interaction"]
@@ -56,6 +60,8 @@ services:
       app:
         condition: service_healthy
     environment: *app-environment
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=160", "--no-interaction"]
