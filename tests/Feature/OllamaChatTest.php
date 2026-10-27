@@ -2,47 +2,53 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ChatWithOllama;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\Request;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Queue;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class OllamaChatTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_chat_sends_bounded_conversation_to_the_configured_local_model(): void
+    public function test_chat_queues_bounded_conversation_and_returns_a_polling_url(): void
     {
-        Http::preventStrayRequests();
-        Http::fake([
-            'ollama.test/api/chat' => Http::response([
-                'message' => ['content' => 'All three services are awaiting their first check.'],
-            ]),
-        ]);
-        config([
-            'services.sentinel.ollama_url' => 'http://ollama.test',
-            'services.sentinel.ollama_model' => 'llama3.1:8b',
-        ]);
+        config(['cache.default' => 'array']);
+        Queue::fake([ChatWithOllama::class]);
 
-        $response = $this->postJson(route('ollama.chat'), [
-            'messages' => [
-                ['role' => 'user', 'content' => 'Summarize service health.'],
-            ],
-        ]);
+        $messages = [];
+        for ($index = 0; $index < 8; $index++) {
+            $messages[] = [
+                'role' => $index % 2 === 0 ? 'assistant' : 'user',
+                'content' => "Message {$index}",
+            ];
+        }
+        $messages[7] = ['role' => 'user', 'content' => str_repeat('x', 2000)];
 
-        $response->assertOk()->assertJsonPath('message', 'All three services are awaiting their first check.')
-            ->assertJsonPath('model', 'llama3.1:8b');
-        Http::assertSent(fn (Request $request) => str_contains($request->url(), 'ollama.test/api/chat')
-            && $request['model'] === 'llama3.1:8b'
-            && $request['stream'] === false
-            && $request['messages'][0]['role'] === 'system'
-            && $request['messages'][1]['content'] === 'Summarize service health.');
+        $response = $this->postJson(route('ollama.chat'), ['messages' => $messages]);
+
+        $response->assertStatus(202)
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('status_url', route('ollama.chat.status', $response->json('request_id'), false));
+        $this->getJson(route('ollama.chat.status', $response->json('request_id')))
+            ->assertStatus(202)
+            ->assertJsonPath('status', 'pending');
+
+        Queue::assertPushed(ChatWithOllama::class, fn (ChatWithOllama $job): bool => count($job->messages) === 6
+            && $job->messages[0]['content'] === 'Message 2'
+            && mb_strlen($job->messages[5]['content']) === 1500);
+        $this->assertSame(
+            ['status' => 'pending'],
+            Cache::get(ChatWithOllama::statusCacheKey($response->json('request_id'))),
+        );
     }
 
     public function test_chat_rejects_history_that_does_not_end_with_a_user_message(): void
     {
-        Http::preventStrayRequests();
+        config(['cache.default' => 'array']);
+        Queue::fake([ChatWithOllama::class]);
 
         $response = $this->postJson(route('ollama.chat'), [
             'messages' => [
@@ -52,24 +58,15 @@ class OllamaChatTest extends TestCase
 
         $response->assertStatus(422)
             ->assertJsonPath('message', 'Send a user message to continue the conversation.');
-        Http::assertNothingSent();
+        Queue::assertNothingPushed();
     }
 
-    public function test_chat_returns_a_local_service_error_when_ollama_cannot_be_reached(): void
+    public function test_unknown_chat_request_returns_404(): void
     {
-        Http::preventStrayRequests();
-        Http::fake([
-            'ollama.test/api/chat' => fn () => throw new ConnectionException('Connection refused.'),
-        ]);
-        config(['services.sentinel.ollama_url' => 'http://ollama.test']);
+        config(['cache.default' => 'array']);
 
-        $response = $this->postJson(route('ollama.chat'), [
-            'messages' => [
-                ['role' => 'user', 'content' => 'What is the status?'],
-            ],
-        ]);
-
-        $response->assertStatus(503)
-            ->assertJsonPath('message', 'Ollama is unavailable. Check that it is running and that OLLAMA_URL is correct.');
+        $this->getJson(route('ollama.chat.status', Str::uuid()))
+            ->assertNotFound()
+            ->assertJsonPath('message', 'This assistant request was not found or has expired.');
     }
 }

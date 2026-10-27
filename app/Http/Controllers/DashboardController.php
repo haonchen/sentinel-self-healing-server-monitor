@@ -18,10 +18,68 @@ class DashboardController extends Controller
 {
     public function index(): View
     {
-        return view('dashboard', $this->dashboardData());
+        $data = $this->dashboardData();
+        $data['editingService'] = old('_method') === 'PUT'
+            ? $data['services']->firstWhere('id', (int) old('service_id'))
+            : null;
+
+        return view('dashboard', $data);
     }
 
     public function storeService(Request $request): RedirectResponse
+    {
+        $validated = $this->validatedServiceInput($request);
+
+        $baseSlug = Str::slug($validated['name']) ?: 'service';
+        $slug = $baseSlug;
+        $suffix = 2;
+
+        while (Service::query()->where('slug', $slug)->exists()) {
+            $slug = $baseSlug.'-'.$suffix++;
+        }
+
+        $service = Service::query()->create([
+            ...$validated,
+            'slug' => $slug,
+            'enabled' => true,
+            'status' => 'unknown',
+        ]);
+
+        return redirect()->route('dashboard')->with('status', "{$service->name} is now monitored.");
+    }
+
+    public function updateService(Request $request, Service $service): RedirectResponse
+    {
+        $service->update([
+            ...$this->validatedServiceInput($request),
+            'status' => 'unknown',
+            'consecutive_failures' => 0,
+            'last_checked_at' => null,
+        ]);
+
+        return redirect()->route('dashboard')->with('status', "{$service->name} configuration updated.");
+    }
+
+    public function destroyService(Service $service): RedirectResponse
+    {
+        $serviceName = $service->name;
+        $service->delete();
+
+        return redirect()->route('dashboard')->with('status', "{$serviceName} is no longer monitored.");
+    }
+
+    /**
+     * @return array{
+     *     name: string,
+     *     container_name: string,
+     *     check_type: 'http'|'tcp',
+     *     check_target: string,
+     *     cooldown_seconds: int,
+     *     description?: string|null,
+     *     documentation_url?: string|null
+     * }
+     */
+    private function validatedServiceInput(Request $request): array
     {
         $targetRule = match ($request->input('check_type')) {
             'http' => 'url:http,https',
@@ -43,22 +101,9 @@ class DashboardController extends Controller
             'container_name.regex' => 'Use the Docker container name without spaces or a leading slash.',
         ]);
 
-        $baseSlug = Str::slug($validated['name']) ?: 'service';
-        $slug = $baseSlug;
-        $suffix = 2;
+        $validated['cooldown_seconds'] = (int) $validated['cooldown_seconds'];
 
-        while (Service::query()->where('slug', $slug)->exists()) {
-            $slug = $baseSlug.'-'.$suffix++;
-        }
-
-        $service = Service::query()->create([
-            ...$validated,
-            'slug' => $slug,
-            'enabled' => true,
-            'status' => 'unknown',
-        ]);
-
-        return redirect()->route('dashboard')->with('status', "{$service->name} is now monitored.");
+        return $validated;
     }
 
     public function snapshot(): JsonResponse

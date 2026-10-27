@@ -46,7 +46,43 @@
                     @else
                         <div class="service-table"><div class="table-head"><span>SERVICE</span><span>STATUS</span><span>UPTIME</span><span>LAST CHECK</span><span></span></div>
                         @foreach($services as $service)
-                            <div class="service-row" data-service-id="{{ $service->id }}" style="--row-index: {{ $loop->index }}"><span class="service-name"><span class="service-icon">{{ strtoupper(substr($service->name, 0, 1)) }}</span><span><strong>{{ $service->name }}</strong><small>{{ $service->container_name }}</small></span></span><span class="status-cell"><i class="status-dot {{ $service->status }}"></i><span class="status-text">{{ ucfirst($service->status) }}</span></span><span class="uptime-cell">{{ $service->checks_last_24h_count ? number_format($service->healthy_checks_last_24h_count / $service->checks_last_24h_count * 100, 2).'%' : '—' }}</span><span class="check-cell">{{ $service->last_checked_at?->diffForHumans() ?? 'Not checked yet' }}</span><span class="row-arrow"><a class="service-report-link" href="{{ route('services.report', $service) }}" title="Open {{ $service->name }} report" aria-label="Open {{ $service->name }} report">↗</a>@if($chaosEnabled)<form method="post" action="{{ route('services.chaos', $service) }}" class="chaos-form">@csrf<button class="chaos-button" type="submit" title="Stop container for a chaos test" aria-label="Stop {{ $service->name }} for a chaos test">✕</button></form>@endif</span></div>
+                            <div class="service-row" data-service-id="{{ $service->id }}" style="--row-index: {{ $loop->index }}">
+                                <span class="service-name"><span class="service-icon">{{ strtoupper(substr($service->name, 0, 1)) }}</span><span><strong>{{ $service->name }}</strong><small>{{ $service->container_name }}</small></span></span>
+                                <span class="status-cell"><i class="status-dot {{ $service->status }}"></i><span class="status-text">{{ ucfirst($service->status) }}</span></span>
+                                <span class="uptime-cell">{{ $service->checks_last_24h_count ? number_format($service->healthy_checks_last_24h_count / $service->checks_last_24h_count * 100, 2).'%' : '—' }}</span>
+                                <span class="check-cell">{{ $service->last_checked_at?->diffForHumans() ?? 'Not checked yet' }}</span>
+                                <details class="service-actions">
+                                    <summary class="service-actions-button" aria-label="Manage {{ $service->name }}">Manage <span aria-hidden="true">⌄</span></summary>
+                                    <div class="service-action-menu">
+                                        <a class="service-menu-item service-report-link" href="{{ route('services.report', $service) }}">View report</a>
+                                        <button
+                                            class="service-menu-item"
+                                            type="button"
+                                            data-configure-service
+                                            data-service-id="{{ $service->id }}"
+                                            data-update-url="{{ route('services.update', $service) }}"
+                                            data-name="{{ $service->name }}"
+                                            data-container-name="{{ $service->container_name }}"
+                                            data-check-type="{{ $service->check_type }}"
+                                            data-check-target="{{ $service->check_target }}"
+                                            data-cooldown-seconds="{{ $service->cooldown_seconds }}"
+                                            data-description="{{ $service->description }}"
+                                            data-documentation-url="{{ $service->documentation_url }}"
+                                        >Configure</button>
+                                        @if($chaosEnabled)
+                                            <form method="post" action="{{ route('services.chaos', $service) }}" class="chaos-form">
+                                                @csrf
+                                                <button class="service-menu-item chaos-menu-item" type="submit">Chaos test</button>
+                                            </form>
+                                        @endif
+                                        <form method="post" action="{{ route('services.destroy', $service) }}" class="remove-service-form" data-service-name="{{ $service->name }}">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button class="service-menu-item remove-menu-item" type="submit">Remove</button>
+                                        </form>
+                                    </div>
+                                </details>
+                            </div>
                         @endforeach
                         </div>
                     @endif
@@ -68,19 +104,28 @@
     </div>
 
     <dialog class="service-dialog" id="service-dialog" aria-labelledby="service-dialog-title" @if($errors->hasAny(['name', 'container_name', 'check_type', 'check_target', 'cooldown_seconds', 'description', 'documentation_url'])) open @endif>
-        <form method="post" action="{{ route('services.store') }}" id="service-form">
+        <form
+            method="post"
+            action="{{ $editingService ? route('services.update', $editingService) : route('services.store') }}"
+            id="service-form"
+            data-store-action="{{ route('services.store') }}"
+        >
             @csrf
-            <header class="dialog-header"><div><span class="section-kicker">SERVICE CONFIGURATION</span><h2 id="service-dialog-title">Add a service</h2><p>Connect a container and choose how Sentinel checks it.</p></div><button class="dialog-close" type="button" data-close-service-dialog aria-label="Close dialog">×</button></header>
+            @if($editingService)
+                @method('PUT')
+            @endif
+            <input type="hidden" name="service_id" value="{{ old('service_id', $editingService?->id) }}">
+            <header class="dialog-header"><div><span class="section-kicker">SERVICE CONFIGURATION</span><h2 id="service-dialog-title">{{ $editingService ? 'Configure service' : 'Add a service' }}</h2><p id="service-dialog-description">{{ $editingService ? 'Update the container and how Sentinel checks it.' : 'Connect a container and choose how Sentinel checks it.' }}</p></div><button class="dialog-close" type="button" data-close-service-dialog aria-label="Close dialog">×</button></header>
             <div class="dialog-fields">
-                <label class="form-field"><span>Service name</span><input name="name" value="{{ old('name') }}" placeholder="Payments API" maxlength="120" required autocomplete="off">@error('name')<small class="field-error">{{ $message }}</small>@enderror</label>
-                <label class="form-field"><span>Docker container</span><input name="container_name" value="{{ old('container_name') }}" placeholder="payments-api" maxlength="255" required autocomplete="off">@error('container_name')<small class="field-error">{{ $message }}</small>@enderror</label>
-                <fieldset class="form-field probe-field"><legend>Health check type</legend><div class="mode-switch"><label><input type="radio" name="check_type" value="http" @checked(old('check_type', 'http') === 'http')><span>HTTP</span></label><label><input type="radio" name="check_type" value="tcp" @checked(old('check_type') === 'tcp')><span>TCP</span></label></div>@error('check_type')<small class="field-error">{{ $message }}</small>@enderror</fieldset>
-                <label class="form-field"><span id="target-label">Health-check URL</span><input id="check-target" name="check_target" type="text" value="{{ old('check_target') }}" placeholder="https://payments.internal/health" maxlength="255" required autocomplete="off" aria-describedby="target-help">@error('check_target')<small class="field-error">{{ $message }}</small>@enderror<small class="field-hint" id="target-help">Use an HTTP or HTTPS endpoint reachable from the monitor.</small></label>
-                <label class="form-field"><span>Restart cooldown</span><div class="number-field"><input name="cooldown_seconds" type="number" value="{{ old('cooldown_seconds', 300) }}" min="30" max="3600" step="30" required><span>seconds</span></div>@error('cooldown_seconds')<small class="field-error">{{ $message }}</small>@enderror</label>
-                <label class="form-field"><span>Description <small>OPTIONAL</small></span><input name="description" value="{{ old('description') }}" placeholder="What this service does" maxlength="500">@error('description')<small class="field-error">{{ $message }}</small>@enderror</label>
-                <label class="form-field"><span>Documentation URL <small>OPTIONAL</small></span><input name="documentation_url" type="url" value="{{ old('documentation_url') }}" placeholder="https://docs.example.com/service" maxlength="2048">@error('documentation_url')<small class="field-error">{{ $message }}</small>@enderror<small class="field-hint">Link to this service’s official docs or a downloadable document.</small></label>
+                <label class="form-field"><span>Service name</span><input name="name" value="{{ old('name', $editingService?->name) }}" placeholder="Payments API" maxlength="120" required autocomplete="off">@error('name')<small class="field-error">{{ $message }}</small>@enderror</label>
+                <label class="form-field"><span>Docker container</span><input name="container_name" value="{{ old('container_name', $editingService?->container_name) }}" placeholder="payments-api" maxlength="255" required autocomplete="off">@error('container_name')<small class="field-error">{{ $message }}</small>@enderror</label>
+                <fieldset class="form-field probe-field"><legend>Health check type</legend><div class="mode-switch"><label><input type="radio" name="check_type" value="http" @checked(old('check_type', $editingService?->check_type ?? 'http') === 'http')><span>HTTP</span></label><label><input type="radio" name="check_type" value="tcp" @checked(old('check_type', $editingService?->check_type) === 'tcp')><span>TCP</span></label></div>@error('check_type')<small class="field-error">{{ $message }}</small>@enderror</fieldset>
+                <label class="form-field"><span id="target-label">Health-check URL</span><input id="check-target" name="check_target" type="text" value="{{ old('check_target', $editingService?->check_target) }}" placeholder="https://payments.internal/health" maxlength="255" required autocomplete="off" aria-describedby="target-help">@error('check_target')<small class="field-error">{{ $message }}</small>@enderror<small class="field-hint" id="target-help">Use an HTTP or HTTPS endpoint reachable from the monitor.</small></label>
+                <label class="form-field"><span>Restart cooldown</span><div class="number-field"><input name="cooldown_seconds" type="number" value="{{ old('cooldown_seconds', $editingService?->cooldown_seconds ?? 300) }}" min="30" max="3600" step="30" required><span>seconds</span></div>@error('cooldown_seconds')<small class="field-error">{{ $message }}</small>@enderror</label>
+                <label class="form-field"><span>Description <small>OPTIONAL</small></span><input name="description" value="{{ old('description', $editingService?->description) }}" placeholder="What this service does" maxlength="500">@error('description')<small class="field-error">{{ $message }}</small>@enderror</label>
+                <label class="form-field"><span>Documentation URL <small>OPTIONAL</small></span><input name="documentation_url" type="url" value="{{ old('documentation_url', $editingService?->documentation_url) }}" placeholder="https://docs.example.com/service" maxlength="2048">@error('documentation_url')<small class="field-error">{{ $message }}</small>@enderror<small class="field-hint">Link to this service’s official docs or a downloadable document.</small></label>
             </div>
-            <footer class="dialog-actions"><button class="secondary-button" type="button" data-close-service-dialog>Cancel</button><button class="primary-button" type="submit"><span class="button-plus">+</span>Add service</button></footer>
+            <footer class="dialog-actions"><button class="secondary-button" type="button" data-close-service-dialog>Cancel</button><button class="primary-button" type="submit"><span class="button-plus">+</span><span class="submit-label">{{ $editingService ? 'Save changes' : 'Add service' }}</span></button></footer>
         </form>
     </dialog>
 

@@ -31,7 +31,7 @@ class AnalyzeIncident implements ShouldQueue
         $prompt = <<<PROMPT
 You are an on-premises operations assistant. Analyze the container logs below.
 Return only a JSON object with string fields: severity (low, medium, high, or critical), likely_cause, suggested_fix.
-Do not claim facts that are not supported by the logs. Keep each explanation concise.
+Do not claim facts that are not supported by the logs. Keep likely_cause and suggested_fix to one short sentence each.
 
 Service: {$incident->service->name}
 Failure: {$incident->failure_reason}
@@ -46,6 +46,10 @@ PROMPT;
                 'prompt' => $prompt,
                 'stream' => false,
                 'format' => 'json',
+                'options' => [
+                    'num_predict' => 160,
+                    'temperature' => 0.2,
+                ],
             ])
             ->throw()
             ->json('response');

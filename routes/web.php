@@ -7,12 +7,18 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
 Route::get('/dashboard/snapshot', [DashboardController::class, 'snapshot'])->name('dashboard.snapshot');
 Route::post('/services', [DashboardController::class, 'storeService'])->name('services.store');
+Route::put('/services/{service}', [DashboardController::class, 'updateService'])->name('services.update');
+Route::delete('/services/{service}', [DashboardController::class, 'destroyService'])->name('services.destroy');
 Route::get('/services/{service}/report', [DashboardController::class, 'serviceReport'])->name('services.report');
 Route::get('/services/{service}/check', [DashboardController::class, 'checkService'])
     ->middleware('throttle:30,1')
     ->name('services.check');
 Route::post('/services/{service}/documentation', [DashboardController::class, 'updateDocumentation'])->name('services.documentation.update');
 Route::post('/ollama/chat', OllamaChatController::class)->middleware('throttle:10,1')->name('ollama.chat');
+Route::get('/ollama/chat/{requestId}', [OllamaChatController::class, 'status'])
+    ->whereUuid('requestId')
+    ->middleware('throttle:120,1')
+    ->name('ollama.chat.status');
 Route::get('/incidents/{incident}', [DashboardController::class, 'incident'])->name('incidents.show');
 Route::post('/services/{service}/chaos', [DashboardController::class, 'chaos'])
     ->middleware('throttle:2,1')
